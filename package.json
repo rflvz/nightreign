@@ -1,0 +1,20 @@
+{
+  "name": "discord-matchmaking-bot",
+  "version": "1.0.0",
+  "description": "Bot de Discord para sistema de matchmaking automático sin base de datos",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "keywords": ["discord", "bot", "matchmaking", "voice", "team"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1"
+  }
+} 
