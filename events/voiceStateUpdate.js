@@ -3,11 +3,7 @@ const { Events } = require('discord.js');
 module.exports = {
     name: Events.VoiceStateUpdate,
     async execute(oldState, newState) {
-        const { client } = newState;
-        const { matchmakingSystem, matchmaking } = client;
-        
-        if (!matchmakingSystem) return;
-
+        const { matchmakingSystem, matchmaking } = newState.client;
         const userId = newState.id;
         const guildId = newState.guild.id;
 
@@ -21,7 +17,7 @@ module.exports = {
             await handleUserLeftChannel(userId, oldState.channel, guildId, matchmakingSystem, matchmaking);
         }
         
-        // Usuario cambió de canal
+        // Usuario se movió entre canales
         if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
             await handleUserLeftChannel(userId, oldState.channel, guildId, matchmakingSystem, matchmaking);
             await handleUserJoinedChannel(userId, newState.channel, guildId, matchmakingSystem, matchmaking);
@@ -33,35 +29,34 @@ module.exports = {
  * Manejar cuando un usuario se une a un canal de voz
  */
 async function handleUserJoinedChannel(userId, channel, guildId, matchmakingSystem, matchmaking) {
-    // Verificar si el canal se llama "matchmaking" (sin importar mayúsculas/minúsculas)
-    const isMatchmakingChannel = channel.name.toLowerCase() === 'matchmaking';
+    // Verificar si es un canal de matchmaking por plataforma
+    const platform = matchmakingSystem.getPlatformFromChannel(channel.name);
     
-    if (isMatchmakingChannel) {
-        console.log(`👋 Usuario ${userId} se unió al canal de matchmaking: ${channel.name}`);
+    if (platform) {
+        console.log(`👋 Usuario ${userId} se unió al canal de matchmaking de ${platform.toUpperCase()}: ${channel.name}`);
         
-        // Configurar automáticamente el servidor si no está configurado
-        await autoConfigureGuild(guildId, channel, matchmaking);
-        
-        // Añadir a la cola de matchmaking
-        const added = await matchmakingSystem.addToQueue(userId, guildId);
+        // Añadir a la cola de matchmaking de la plataforma
+        const added = await matchmakingSystem.addToQueue(userId, guildId, platform);
         if (added) {
             // Actualizar actividad del canal de lobby
             matchmakingSystem.updateChannelActivity(channel.id);
             
-            // Notificar al usuario sobre su posición en la cola
-            const queuePosition = matchmaking.waitingQueue.indexOf(userId) + 1;
-            const membersNeeded = matchmaking.config.teamSize - matchmaking.waitingQueue.length;
+            // Obtener estadísticas de la cola
+            const queueStats = matchmakingSystem.getQueueStats(guildId);
+            const queuePosition = matchmaking.waitingQueues[platform].indexOf(userId) + 1;
+            const membersNeeded = matchmaking.config.teamSize - matchmaking.waitingQueues[platform].length;
             
             try {
                 const guild = await channel.guild;
                 const member = await guild.members.fetch(userId);
                 
-                console.log(`📝 Usuario ${member.displayName} en posición ${queuePosition} de la cola`);
+                console.log(`📝 Usuario ${member.displayName} en posición ${queuePosition} de la cola de ${platform.toUpperCase()}`);
+                console.log(`📊 Colas actuales - PC: ${queueStats.pc}, Xbox: ${queueStats.xbox}, PlayStation: ${queueStats.play}`);
                 
                 if (membersNeeded > 0) {
-                    console.log(`⏳ Esperando ${membersNeeded} jugador(es) más para formar equipo`);
+                    console.log(`⏳ Esperando ${membersNeeded} jugador(es) más para formar equipo de ${platform.toUpperCase()}`);
                 } else {
-                    console.log(`🎮 ¡Formando equipo automáticamente!`);
+                    console.log(`🎮 ¡Formando equipo de ${platform.toUpperCase()} automáticamente!`);
                 }
             } catch (error) {
                 console.error('❌ Error obteniendo información del usuario:', error);
@@ -81,20 +76,25 @@ async function handleUserJoinedChannel(userId, channel, guildId, matchmakingSyst
  * Manejar cuando un usuario sale de un canal de voz
  */
 async function handleUserLeftChannel(userId, channel, guildId, matchmakingSystem, matchmaking) {
-    // Verificar si es el canal de matchmaking
-    const isMatchmakingChannel = channel.name.toLowerCase() === 'matchmaking';
+    // Verificar si es un canal de matchmaking por plataforma
+    const platform = matchmakingSystem.getPlatformFromChannel(channel.name);
     
-    if (isMatchmakingChannel) {
+    if (platform) {
         const removed = matchmakingSystem.removeFromQueue(userId);
         if (removed) {
-            console.log(`👋 Usuario ${userId} salió del matchmaking y fue removido de la cola`);
+            console.log(`👋 Usuario ${userId} salió del matchmaking de ${platform.toUpperCase()} y fue removido de la cola`);
+            
+            // Mostrar estadísticas actualizadas
+            const queueStats = matchmakingSystem.getQueueStats(guildId);
+            console.log(`📊 Colas actuales - PC: ${queueStats.pc}, Xbox: ${queueStats.xbox}, PlayStation: ${queueStats.play}`);
         }
         return;
     }
     
     // Verificar si es un canal activo del sistema de matchmaking
     if (matchmakingSystem.isActiveChannel(channel.id)) {
-        console.log(`👋 Usuario ${userId} salió del canal activo ${channel.name}`);
+        const channelInfo = matchmakingSystem.getChannelInfo(channel.id);
+        console.log(`👋 Usuario ${userId} salió del canal activo ${channel.name} (${channelInfo?.platform?.toUpperCase() || 'UNKNOWN'})`);
         
         // Actualizar actividad del canal
         matchmakingSystem.updateChannelActivity(channel.id);
@@ -105,7 +105,6 @@ async function handleUserLeftChannel(userId, channel, guildId, matchmakingSystem
             await matchmakingSystem.deleteTeamChannel(channel.id);
         } else {
             // Verificar si el líder se fue y transferir liderazgo
-            const channelInfo = matchmakingSystem.getChannelInfo(channel.id);
             if (channelInfo && channelInfo.leaderId === userId) {
                 await transferLeadership(channel, channelInfo, matchmakingSystem);
             }
@@ -114,84 +113,45 @@ async function handleUserLeftChannel(userId, channel, guildId, matchmakingSystem
 }
 
 /**
- * Configurar automáticamente el servidor cuando se detecta un canal "matchmaking"
- */
-async function autoConfigureGuild(guildId, matchmakingChannel, matchmaking) {
-    const { guildSettings } = matchmaking;
-    
-    // Si ya está configurado, no hacer nada
-    if (guildSettings.has(guildId)) {
-        return;
-    }
-    
-    // Buscar una categoría llamada "Matchmaking" o usar la categoría del canal actual
-    let categoryId = matchmakingChannel.parentId;
-    
-    try {
-        const guild = matchmakingChannel.guild;
-        const matchmakingCategory = guild.channels.cache.find(
-            ch => ch.name.toLowerCase() === 'matchmaking' && ch.type === 4 // 4 = CategoryChannel
-        );
-        
-        if (matchmakingCategory) {
-            categoryId = matchmakingCategory.id;
-        }
-    } catch (error) {
-        console.log('⚠️ No se pudo encontrar categoría específica, usando la del canal');
-    }
-    
-    // Configurar automáticamente
-    const settings = {
-        lobbyChannelId: matchmakingChannel.id,
-        categoryId: categoryId,
-        setupBy: 'auto-config',
-        setupAt: Date.now()
-    };
-    
-    guildSettings.set(guildId, settings);
-    
-    console.log(`⚙️ Servidor ${guildId} configurado automáticamente:`);
-    console.log(`   • Canal de matchmaking: ${matchmakingChannel.name} (${matchmakingChannel.id})`);
-    console.log(`   • Categoría: ${categoryId || 'Sin categoría'}`);
-}
-
-/**
- * Transferir liderazgo cuando el líder actual se va
+ * Transferir liderazgo cuando el líder actual sale del canal
  */
 async function transferLeadership(channel, channelInfo, matchmakingSystem) {
     try {
-        const remainingMembers = Array.from(channel.members.keys());
+        // Obtener miembros actuales del canal
+        const members = Array.from(channel.members.values());
         
-        if (remainingMembers.length > 0) {
-            const newLeaderId = remainingMembers[0];
-            const newLeader = await channel.guild.members.fetch(newLeaderId);
-            
-            if (newLeader) {
-                // Actualizar información del canal
-                const { activeChannels } = matchmakingSystem.client.matchmaking;
-                const updatedChannelInfo = {
-                    ...channelInfo,
-                    leaderId: newLeaderId,
-                    timestamp: Date.now()
-                };
-                activeChannels.set(channel.id, updatedChannelInfo);
-                
-                // Dar permisos de líder al nuevo usuario
-                await channel.permissionOverwrites.edit(newLeaderId, {
-                    ManageChannels: true,
-                    MoveMembers: true,
-                    MuteMembers: true,
-                    DeafenMembers: true
-                });
-                
-                // Renombrar canal con el nuevo líder usando el formato "nightreign [nombre]"
-                const newChannelName = `nightreign ${newLeader.displayName}`;
-                await channel.setName(newChannelName);
-                
-                console.log(`👑 Liderazgo transferido a ${newLeader.displayName} en canal ${channel.id}`);
-                console.log(`📝 Canal renombrado a: ${newChannelName}`);
-            }
+        if (members.length === 0) {
+            return; // No hay nadie para transferir
         }
+        
+        // Seleccionar nuevo líder (el primer miembro disponible)
+        const newLeader = members[0];
+        
+        // Actualizar permisos del canal
+        await channel.permissionOverwrites.edit(channelInfo.leaderId, {
+            ViewChannel: true,
+            Connect: true,
+            ManageChannels: false,
+            MoveMembers: false,
+            MuteMembers: false,
+            DeafenMembers: false
+        });
+        
+        await channel.permissionOverwrites.edit(newLeader.id, {
+            ViewChannel: true,
+            Connect: true,
+            ManageChannels: true,
+            MoveMembers: true,
+            MuteMembers: true,
+            DeafenMembers: true
+        });
+        
+        // Actualizar información del canal
+        channelInfo.leaderId = newLeader.id;
+        matchmakingSystem.client.matchmaking.activeChannels.set(channel.id, channelInfo);
+        
+        console.log(`👑 Liderazgo transferido a ${newLeader.displayName} en canal ${channel.name} (${channelInfo.platform?.toUpperCase() || 'UNKNOWN'})`);
+        
     } catch (error) {
         console.error('❌ Error transfiriendo liderazgo:', error);
     }

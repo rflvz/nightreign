@@ -16,11 +16,12 @@ client.matchmaking = {
     // Map de canales activos: channelId → { líderId, miembros, timestamp }
     activeChannels: new Map(),
     
-    // Array de cola de espera: [userId1, userId2, ...]
-    waitingQueue: [],
-    
-    // Map de configuración: guildId → { lobbyChannelId, categoryId }
-    guildSettings: new Map(),
+    // Colas de espera por plataforma: platform → [userId1, userId2, ...]
+    waitingQueues: {
+        pc: [],
+        xbox: [],
+        play: []
+    },
     
     // Set de usuarios en cooldown para comandos
     cooldowns: new Set(),
