@@ -20,9 +20,9 @@ module.exports = {
 
         // Buscar canales de matchmaking existentes
         const foundChannels = {
-            pc: guild.channels.cache.find(ch => ch.name.toLowerCase() === 'matchmaking pc' && ch.type === 2),
-            xbox: guild.channels.cache.find(ch => ch.name.toLowerCase() === 'matchmaking xbox' && ch.type === 2),
-            play: guild.channels.cache.find(ch => ch.name.toLowerCase() === 'matchmaking play' && ch.type === 2)
+            pc: guild.channels.cache.find(ch => ch.name.toLowerCase() === 'matchmaking-pc' && ch.type === 2),
+            xbox: guild.channels.cache.find(ch => ch.name.toLowerCase() === 'matchmaking-xbox' && ch.type === 2),
+            play: guild.channels.cache.find(ch => ch.name.toLowerCase() === 'matchmaking-play' && ch.type === 2)
         };
 
         // Buscar categoría de matchmaking
@@ -67,9 +67,9 @@ module.exports = {
                     name: '🚀 **Cómo Crear los Canales**',
                     value: 
                         'Para que el sistema funcione, crea estos canales de voz:\n\n' +
-                        '• **`matchmaking pc`** - Para jugadores de PC\n' +
-                        '• **`matchmaking xbox`** - Para jugadores de Xbox\n' +
-                        '• **`matchmaking play`** - Para jugadores de PlayStation\n\n' +
+                        '• **`matchmaking-pc`** - Para jugadores de PC\n' +
+                        '• **`matchmaking-xbox`** - Para jugadores de Xbox\n' +
+                        '• **`matchmaking-play`** - Para jugadores de PlayStation\n\n' +
                         '¡Una vez creados, el sistema funciona automáticamente!',
                     inline: false
                 }

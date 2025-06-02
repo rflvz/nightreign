@@ -23,9 +23,9 @@ module.exports = {
                 },
                 {
                     name: '🎮 **Canales de Matchmaking**',
-                    value: '• **matchmaking pc** - Para jugadores de PC 💻\n' +
-                           '• **matchmaking xbox** - Para jugadores de Xbox 🎮\n' +
-                           '• **matchmaking play** - Para jugadores de PlayStation 🎮',
+                    value: '• **matchmaking-pc** - Para jugadores de PC 💻\n' +
+                           '• **matchmaking-xbox** - Para jugadores de Xbox 🎮\n' +
+                           '• **matchmaking-play** - Para jugadores de PlayStation 🎮',
                     inline: false
                 },
                 {

@@ -9,9 +9,9 @@ class MatchmakingSystem {
         this.client = client;
         // Mapeo de nombres de canales a plataformas
         this.platformChannels = {
-            'matchmaking pc': 'pc',
-            'matchmaking xbox': 'xbox', 
-            'matchmaking play': 'play'
+            'matchmaking-pc': 'pc',
+            'matchmaking-xbox': 'xbox', 
+            'matchmaking-play': 'play'
         };
     }
 
@@ -194,7 +194,7 @@ class MatchmakingSystem {
             const channelName = `nightreign ${platformNames[platform]} ${leader.displayName}`;
             
             // Buscar el canal de matchmaking de la plataforma para posicionar el nuevo canal
-            const matchmakingChannelName = `matchmaking ${platform === 'xbox' ? 'xbox' : platform}`;
+            const matchmakingChannelName = `matchmaking-${platform}`;
             const matchmakingChannel = guild.channels.cache.find(
                 ch => ch.name.toLowerCase() === matchmakingChannelName && ch.type === 2 // 2 = GuildVoice
             );
