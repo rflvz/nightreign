@@ -35,7 +35,39 @@ async function handleUserJoinedChannel(userId, channel, guildId, matchmakingSyst
     if (platform) {
         console.log(`👋 Usuario ${userId} se unió al canal de matchmaking de ${platform.toUpperCase()}: ${channel.name}`);
         
-        // Añadir a la cola de matchmaking de la plataforma
+        // PRIMERO: Buscar canales activos de la misma plataforma con espacios libres
+        const availableChannels = await matchmakingSystem.findChannelsWithSpace(guildId, platform);
+        
+        if (availableChannels.length > 0) {
+            // Intentar unir al usuario al primer canal disponible (el que tiene menos miembros)
+            const targetChannelInfo = availableChannels[0];
+            const joined = await matchmakingSystem.joinActiveChannel(
+                userId, 
+                guildId, 
+                targetChannelInfo.channel, 
+                targetChannelInfo.channelData
+            );
+            
+            if (joined) {
+                try {
+                    const guild = await channel.guild;
+                    const member = await guild.members.fetch(userId);
+                    
+                    console.log(`🎯 Usuario ${member.displayName} unido directamente al canal activo ${targetChannelInfo.channel.name} (${platform.toUpperCase()})`);
+                    console.log(`📊 Canal ahora tiene ${targetChannelInfo.channel.members.size}/${matchmaking.config.teamSize} miembros`);
+                    
+                    // Si el canal se llenó completamente, notificarlo
+                    if (targetChannelInfo.channel.members.size === matchmaking.config.teamSize) {
+                        console.log(`🎮 ¡Canal ${targetChannelInfo.channel.name} completamente lleno! Equipo de ${platform.toUpperCase()} listo para jugar`);
+                    }
+                } catch (error) {
+                    console.error('❌ Error obteniendo información del usuario:', error);
+                }
+                return; // Salir sin añadir a la cola
+            }
+        }
+        
+        // SEGUNDO: Si no hay canales disponibles o no se pudo unir, añadir a la cola normal
         const added = await matchmakingSystem.addToQueue(userId, guildId, platform);
         if (added) {
             // Actualizar actividad del canal de lobby
@@ -96,6 +128,14 @@ async function handleUserLeftChannel(userId, channel, guildId, matchmakingSystem
         const channelInfo = matchmakingSystem.getChannelInfo(channel.id);
         console.log(`👋 Usuario ${userId} salió del canal activo ${channel.name} (${channelInfo?.platform?.toUpperCase() || 'UNKNOWN'})`);
         
+        // Actualizar la lista de miembros en los datos del canal
+        if (channelInfo && channelInfo.members.includes(userId)) {
+            const memberIndex = channelInfo.members.indexOf(userId);
+            channelInfo.members.splice(memberIndex, 1);
+            matchmakingSystem.client.matchmaking.activeChannels.set(channel.id, channelInfo);
+            console.log(`📝 Usuario ${userId} removido de la lista de miembros del canal ${channel.name}`);
+        }
+        
         // Actualizar actividad del canal
         matchmakingSystem.updateChannelActivity(channel.id);
         
@@ -104,6 +144,8 @@ async function handleUserLeftChannel(userId, channel, guildId, matchmakingSystem
             console.log(`🗑️ Canal ${channel.name} quedó vacío, eliminando...`);
             await matchmakingSystem.deleteTeamChannel(channel.id);
         } else {
+            console.log(`📊 Canal ${channel.name} ahora tiene ${channel.members.size}/${matchmakingSystem.client.matchmaking.config.teamSize} miembros - ¡Espacio disponible para nuevos jugadores!`);
+            
             // Verificar si el líder se fue y transferir liderazgo
             if (channelInfo && channelInfo.leaderId === userId) {
                 await transferLeadership(channel, channelInfo, matchmakingSystem);

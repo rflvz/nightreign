@@ -353,6 +353,117 @@ class MatchmakingSystem {
             total: waitingQueues.pc.length + waitingQueues.xbox.length + waitingQueues.play.length
         };
     }
+
+    /**
+     * Obtener estadísticas de canales activos con espacios disponibles
+     * @param {string} guildId - ID del servidor
+     * @returns {Object} - Estadísticas de canales con espacios libres
+     */
+    async getActiveChannelsStats(guildId) {
+        const stats = {
+            pc: { channels: 0, totalSpaces: 0 },
+            xbox: { channels: 0, totalSpaces: 0 },
+            play: { channels: 0, totalSpaces: 0 },
+            total: { channels: 0, totalSpaces: 0 }
+        };
+
+        try {
+            for (const platform of ['pc', 'xbox', 'play']) {
+                const availableChannels = await this.findChannelsWithSpace(guildId, platform);
+                stats[platform].channels = availableChannels.length;
+                stats[platform].totalSpaces = availableChannels.reduce((sum, ch) => sum + ch.spacesAvailable, 0);
+                
+                stats.total.channels += availableChannels.length;
+                stats.total.totalSpaces += stats[platform].totalSpaces;
+            }
+        } catch (error) {
+            console.error('❌ Error obteniendo estadísticas de canales activos:', error);
+        }
+
+        return stats;
+    }
+
+    /**
+     * Buscar canales activos de una plataforma específica que tengan espacios libres
+     * @param {string} guildId - ID del servidor
+     * @param {string} platform - Plataforma (pc, xbox, play)
+     * @returns {Array} - Array de canales con espacios disponibles
+     */
+    async findChannelsWithSpace(guildId, platform) {
+        const { activeChannels, config } = this.client.matchmaking;
+        const availableChannels = [];
+
+        try {
+            const guild = await this.client.guilds.fetch(guildId);
+            if (!guild) return availableChannels;
+
+            for (const [channelId, channelData] of activeChannels) {
+                // Verificar que sea de la misma plataforma y servidor
+                if (channelData.platform === platform && channelData.guildId === guildId) {
+                    try {
+                        const channel = await guild.channels.fetch(channelId);
+                        if (channel && channel.members.size < config.teamSize) {
+                            const spacesAvailable = config.teamSize - channel.members.size;
+                            availableChannels.push({
+                                channel: channel,
+                                channelData: channelData,
+                                spacesAvailable: spacesAvailable,
+                                currentMembers: channel.members.size
+                            });
+                        }
+                    } catch (error) {
+                        // Canal no existe, limpiar de la memoria
+                        activeChannels.delete(channelId);
+                    }
+                }
+            }
+
+            // Ordenar por menor cantidad de miembros (para llenar los equipos más vacíos primero)
+            availableChannels.sort((a, b) => a.currentMembers - b.currentMembers);
+
+        } catch (error) {
+            console.error(`❌ Error buscando canales con espacios libres para ${platform}:`, error);
+        }
+
+        return availableChannels;
+    }
+
+    /**
+     * Unir un usuario a un canal activo existente
+     * @param {string} userId - ID del usuario
+     * @param {string} guildId - ID del servidor
+     * @param {VoiceChannel} targetChannel - Canal de destino
+     * @param {Object} channelData - Datos del canal activo
+     * @returns {boolean} - Si se unió exitosamente
+     */
+    async joinActiveChannel(userId, guildId, targetChannel, channelData) {
+        try {
+            const guild = await this.client.guilds.fetch(guildId);
+            if (!guild) return false;
+
+            const member = await guild.members.fetch(userId);
+            if (!member || !member.voice.channel) return false;
+
+            // Mover al usuario al canal
+            await member.voice.setChannel(targetChannel);
+
+            // Actualizar la lista de miembros en los datos del canal
+            if (!channelData.members.includes(userId)) {
+                channelData.members.push(userId);
+                this.client.matchmaking.activeChannels.set(targetChannel.id, channelData);
+            }
+
+            // Actualizar actividad del canal
+            this.updateChannelActivity(targetChannel.id);
+
+            console.log(`🔄 Usuario ${member.displayName} unido al canal activo ${targetChannel.name} (${channelData.platform?.toUpperCase()}) - ${targetChannel.members.size}/${this.client.matchmaking.config.teamSize}`);
+
+            return true;
+        } catch (error) {
+            console.error(`❌ Error uniendo usuario ${userId} al canal activo:`, error);
+            return false;
+        }
+    }
 }
 
 module.exports = MatchmakingSystem; 
