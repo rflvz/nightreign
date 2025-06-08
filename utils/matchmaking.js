@@ -464,6 +464,154 @@ class MatchmakingSystem {
             return false;
         }
     }
+
+    /**
+     * Detectar si un usuario forma parte de un grupo intencional
+     * @param {string} userId - ID del usuario
+     * @param {string} platform - Plataforma (pc, xbox, play)
+     * @returns {Object|null} - Información del grupo detectado o null
+     */
+    detectIntentionalGroup(userId, platform) {
+        const { groupDetection } = this.client.matchmaking;
+        const now = Date.now();
+        
+        // Limpiar entradas antiguas primero
+        this.cleanupOldGroupDetectionEntries(platform);
+        
+        // Agregar el usuario actual a las entradas recientes
+        groupDetection.recentJoins[platform].push({
+            userId: userId,
+            timestamp: now
+        });
+        
+        // Obtener usuarios que se han unido en la ventana de tiempo
+        const recentUsers = groupDetection.recentJoins[platform].filter(
+            entry => (now - entry.timestamp) <= groupDetection.groupDetectionWindow
+        );
+        
+        // Si hay 3 o más usuarios en la ventana de tiempo, considerar como grupo intencional
+        if (recentUsers.length >= groupDetection.minimumGroupSize) {
+            const groupId = `${platform}_${now}_${Math.random().toString(36).substr(2, 9)}`;
+            const userIds = recentUsers.map(entry => entry.userId);
+            
+            const groupData = {
+                users: userIds,
+                platform: platform,
+                timestamp: now,
+                isIntentional: true,
+                id: groupId
+            };
+            
+            // Guardar el grupo detectado
+            groupDetection.detectedGroups.set(groupId, groupData);
+            
+            // Limpiar las entradas recientes ya que se formó un grupo
+            groupDetection.recentJoins[platform] = groupDetection.recentJoins[platform].filter(
+                entry => !userIds.includes(entry.userId)
+            );
+            
+            console.log(`🎯 Grupo intencional detectado para ${platform.toUpperCase()}: ${userIds.length} usuarios [${userIds.join(', ')}]`);
+            
+            return groupData;
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Limpiar entradas de detección de grupos que han expirado
+     * @param {string} platform - Plataforma a limpiar
+     */
+    cleanupOldGroupDetectionEntries(platform) {
+        const { groupDetection } = this.client.matchmaking;
+        const now = Date.now();
+        
+        groupDetection.recentJoins[platform] = groupDetection.recentJoins[platform].filter(
+            entry => (now - entry.timestamp) <= groupDetection.groupDetectionWindow
+        );
+        
+        // Limpiar grupos detectados antiguos (después de 5 minutos)
+        for (const [groupId, groupData] of groupDetection.detectedGroups) {
+            if (now - groupData.timestamp > 300000) { // 5 minutos
+                groupDetection.detectedGroups.delete(groupId);
+            }
+        }
+    }
+    
+    /**
+     * Verificar si un usuario es parte de un grupo intencional activo
+     * @param {string} userId - ID del usuario
+     * @param {string} platform - Plataforma
+     * @returns {Object|null} - Datos del grupo si es parte de uno, null si no
+     */
+    isUserInIntentionalGroup(userId, platform) {
+        const { groupDetection } = this.client.matchmaking;
+        
+        for (const [groupId, groupData] of groupDetection.detectedGroups) {
+            if (groupData.platform === platform && groupData.users.includes(userId) && groupData.isIntentional) {
+                return groupData;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Crear equipo para un grupo intencional detectado
+     * @param {Object} groupData - Datos del grupo intencional
+     * @param {string} guildId - ID del servidor
+     * @returns {Object|null} - Información del equipo creado
+     */
+    async createTeamForIntentionalGroup(groupData, guildId) {
+        const { activeChannels, config } = this.client.matchmaking;
+        
+        try {
+            const guild = await this.client.guilds.fetch(guildId);
+            if (!guild) return null;
+            
+            // Obtener el primer usuario (será el líder)
+            const leader = await guild.members.fetch(groupData.users[0]);
+            if (!leader) return null;
+            
+            // Buscar categoría de matchmaking automáticamente
+            const categoryId = await this.findMatchmakingCategory(guild);
+            
+            // Crear canal de voz temporal
+            const voiceChannel = await this.createVoiceChannel(guild, leader, categoryId, groupData.platform);
+            if (!voiceChannel) return null;
+            
+            // Registrar el canal como activo con marca de grupo intencional
+            activeChannels.set(voiceChannel.id, {
+                leaderId: leader.id,
+                members: groupData.users,
+                platform: groupData.platform,
+                timestamp: Date.now(),
+                guildId: guildId,
+                isIntentionalGroup: true,
+                groupId: groupData.id
+            });
+            
+            // Mover usuarios al canal
+            await this.moveUsersToChannel(guild, groupData.users, voiceChannel);
+            
+            console.log(`🎮 Equipo de grupo intencional creado para ${groupData.platform.toUpperCase()}! Canal: ${voiceChannel.name}, Líder: ${leader.displayName}, Miembros: ${groupData.users.length}`);
+            
+            // Marcar el grupo como procesado
+            this.client.matchmaking.groupDetection.detectedGroups.delete(groupData.id);
+            
+            return {
+                channel: voiceChannel,
+                leader: leader,
+                members: groupData.users,
+                platform: groupData.platform,
+                isIntentionalGroup: true
+            };
+            
+        } catch (error) {
+            console.error(`❌ Error creando equipo para grupo intencional de ${groupData.platform}:`, error);
+            return null;
+        }
+    }
 }
 
 module.exports = MatchmakingSystem; 

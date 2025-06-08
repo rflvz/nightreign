@@ -27,6 +27,13 @@ Un bot completo de Discord desarrollado en Node.js que crea automáticamente equ
 - **Posicionamiento inteligente**: Los canales de equipo aparecen justo debajo del canal matchmaking
 - **Sin base de datos**: Todo funciona en memoria usando Map, Set y Arrays
 
+### 🎯 Sistema de Detección de Grupos Automática
+- **Detección inteligente**: Detecta automáticamente cuando 3 amigos entran juntos (en 30 segundos)
+- **Preservación de grupos**: Los grupos de amigos se mantienen juntos sin ser separados
+- **Prioridad de grupos**: Los grupos intencionales tienen prioridad sobre la unión automática
+- **Transparente**: No requiere comandos adicionales - funciona automáticamente
+- **Filtrado inteligente**: Solo usuarios individuales se unen a canales existentes
+
 ### 👑 Sistema de Liderazgo
 - **Líder automático**: El primer usuario del equipo se convierte en líder
 - **Permisos especiales**: Los líderes pueden gestionar su canal

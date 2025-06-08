@@ -61,6 +61,16 @@ module.exports = {
                            '• Expulsar usuarios\n' +
                            '• Terminar la partida',
                     inline: false
+                },
+                {
+                    name: '🎮 Sistema de Matchmaking',
+                    value: [
+                        '• **Detección Automática**: Los canales `matchmaking-pc`, `matchmaking-xbox`, `matchmaking-play` se detectan automáticamente',
+                        '• **Formación de Equipos**: Cuando 3 usuarios se unen, se crea un equipo automáticamente',
+                        '• **Grupos de Amigos**: Si 3 amigos entran juntos en 30 segundos, se mantienen como grupo',
+                        '• **Canales Temporales**: Se crean canales únicos `nightreign [PLATAFORMA] [líder]`',
+                        '• **Auto-eliminación**: Los canales se eliminan cuando quedan vacíos'
+                    ].join('\n')
                 }
             )
             .setFooter({ 

@@ -1,4 +1,5 @@
 const { Events } = require('discord.js');
+const MatchmakingSystem = require('../utils/matchmaking');
 
 module.exports = {
     name: Events.VoiceStateUpdate,
@@ -7,20 +8,23 @@ module.exports = {
         const userId = newState.id;
         const guildId = newState.guild.id;
 
+        // Usar la instancia ya inicializada del sistema de matchmaking
+        const system = matchmakingSystem;
+
         // Usuario se unió a un canal de voz
         if (!oldState.channel && newState.channel) {
-            await handleUserJoinedChannel(userId, newState.channel, guildId, matchmakingSystem, matchmaking);
+            await handleUserJoinedChannel(userId, newState.channel, guildId, system, matchmaking);
         }
         
         // Usuario salió de un canal de voz
         if (oldState.channel && !newState.channel) {
-            await handleUserLeftChannel(userId, oldState.channel, guildId, matchmakingSystem, matchmaking);
+            await handleUserLeftChannel(userId, oldState.channel, guildId, system, matchmaking);
         }
         
         // Usuario se movió entre canales
         if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
-            await handleUserLeftChannel(userId, oldState.channel, guildId, matchmakingSystem, matchmaking);
-            await handleUserJoinedChannel(userId, newState.channel, guildId, matchmakingSystem, matchmaking);
+            await handleUserLeftChannel(userId, oldState.channel, guildId, system, matchmaking);
+            await handleUserJoinedChannel(userId, newState.channel, guildId, system, matchmaking);
         }
     },
 };
@@ -35,12 +39,44 @@ async function handleUserJoinedChannel(userId, channel, guildId, matchmakingSyst
     if (platform) {
         console.log(`👋 Usuario ${userId} se unió al canal de matchmaking de ${platform.toUpperCase()}: ${channel.name}`);
         
-        // PRIMERO: Buscar canales activos de la misma plataforma con espacios libres
+        // PRIMERO: Detectar si el usuario forma parte de un grupo intencional
+        const detectedGroup = matchmakingSystem.detectIntentionalGroup(userId, platform);
+        
+        if (detectedGroup && detectedGroup.users.length >= matchmaking.config.teamSize) {
+            // Crear equipo directamente para el grupo intencional, sin buscar canales existentes
+            console.log(`🎯 Creando equipo para grupo intencional de ${platform.toUpperCase()} con ${detectedGroup.users.length} miembros`);
+            
+            const teamResult = await matchmakingSystem.createTeamForIntentionalGroup(detectedGroup, guildId);
+            if (teamResult) {
+                console.log(`✅ Equipo de grupo intencional creado exitosamente: ${teamResult.channel.name}`);
+                return; // Salir - el grupo intencional tiene prioridad completa
+            }
+        }
+        
+        // SEGUNDO: Si no es parte de un grupo intencional, verificar si ya está en uno
+        const existingGroup = matchmakingSystem.isUserInIntentionalGroup(userId, platform);
+        if (existingGroup) {
+            console.log(`🎯 Usuario ${userId} es parte de un grupo intencional pendiente de ${platform.toUpperCase()}, no se une a canales existentes`);
+            // Añadir a la cola normal pero con prioridad de grupo
+            const added = await matchmakingSystem.addToQueue(userId, guildId, platform);
+            if (added) {
+                matchmakingSystem.updateChannelActivity(channel.id);
+                console.log(`📝 Usuario ${userId} añadido a la cola como parte de un grupo intencional`);
+            }
+            return;
+        }
+        
+        // TERCERO: Buscar canales activos de la misma plataforma con espacios libres (solo para usuarios individuales)
         const availableChannels = await matchmakingSystem.findChannelsWithSpace(guildId, platform);
         
-        if (availableChannels.length > 0) {
+        // Filtrar canales que NO son grupos intencionales para permitir unión automática
+        const nonIntentionalChannels = availableChannels.filter(channelInfo => 
+            !channelInfo.channelData.isIntentionalGroup
+        );
+        
+        if (nonIntentionalChannels.length > 0) {
             // Intentar unir al usuario al primer canal disponible (el que tiene menos miembros)
-            const targetChannelInfo = availableChannels[0];
+            const targetChannelInfo = nonIntentionalChannels[0];
             const joined = await matchmakingSystem.joinActiveChannel(
                 userId, 
                 guildId, 
@@ -67,7 +103,7 @@ async function handleUserJoinedChannel(userId, channel, guildId, matchmakingSyst
             }
         }
         
-        // SEGUNDO: Si no hay canales disponibles o no se pudo unir, añadir a la cola normal
+        // CUARTO: Si no hay canales disponibles o no se pudo unir, añadir a la cola normal
         const added = await matchmakingSystem.addToQueue(userId, guildId, platform);
         if (added) {
             // Actualizar actividad del canal de lobby
@@ -112,6 +148,25 @@ async function handleUserLeftChannel(userId, channel, guildId, matchmakingSystem
     const platform = matchmakingSystem.getPlatformFromChannel(channel.name);
     
     if (platform) {
+        // Limpiar el usuario de las entradas de detección de grupo
+        const { groupDetection } = matchmakingSystem.client.matchmaking;
+        groupDetection.recentJoins[platform] = groupDetection.recentJoins[platform].filter(
+            entry => entry.userId !== userId
+        );
+        
+        // Limpiar de grupos detectados si estaba en alguno
+        for (const [groupId, groupData] of groupDetection.detectedGroups) {
+            if (groupData.platform === platform && groupData.users.includes(userId)) {
+                groupData.users = groupData.users.filter(id => id !== userId);
+                if (groupData.users.length < groupDetection.minimumGroupSize) {
+                    groupDetection.detectedGroups.delete(groupId);
+                    console.log(`🔄 Grupo intencional ${groupId} disuelto - no hay suficientes miembros`);
+                } else {
+                    groupDetection.detectedGroups.set(groupId, groupData);
+                }
+            }
+        }
+        
         const removed = matchmakingSystem.removeFromQueue(userId);
         if (removed) {
             console.log(`👋 Usuario ${userId} salió del matchmaking de ${platform.toUpperCase()} y fue removido de la cola`);

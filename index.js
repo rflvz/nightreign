@@ -23,6 +23,22 @@ client.matchmaking = {
         play: []
     },
     
+    // Sistema de detección de grupos automática
+    groupDetection: {
+        // Usuarios que han entrado recientemente por plataforma: platform → [{ userId, timestamp }, ...]
+        recentJoins: {
+            pc: [],
+            xbox: [],
+            play: []
+        },
+        // Grupos detectados automáticamente: groupId → { users: [], platform, timestamp, isIntentional: true }
+        detectedGroups: new Map(),
+        // Tiempo límite para considerar usuarios como grupo (30 segundos)
+        groupDetectionWindow: 30000,
+        // Tamaño mínimo de grupo para ser considerado intencional
+        minimumGroupSize: 3
+    },
+    
     // Set de usuarios en cooldown para comandos
     cooldowns: new Set(),
     
@@ -53,6 +69,10 @@ if (fs.existsSync(commandsPath)) {
         }
     }
 }
+
+// Inicializar el sistema de matchmaking
+const MatchmakingSystem = require('./utils/matchmaking');
+client.matchmakingSystem = new MatchmakingSystem(client);
 
 // Cargar eventos
 const eventsPath = path.join(__dirname, 'events');
@@ -103,7 +123,7 @@ async function deployCommands() {
     }
 }
 
-// Función de limpieza de canales inactivos
+// Función de limpieza de canales inactivos y datos de detección de grupos
 function cleanupInactiveChannels() {
     const now = Date.now();
     const oneHour = 60 * 60 * 1000; // 1 hora en millisegundos
@@ -124,6 +144,29 @@ function cleanupInactiveChannels() {
             }
         }
     });
+    
+    // Limpiar datos de detección de grupos antiguos
+    const { groupDetection } = client.matchmaking;
+    
+    // Limpiar entradas recientes antiguas (mayores a la ventana de detección)
+    for (const platform of ['pc', 'xbox', 'play']) {
+        groupDetection.recentJoins[platform] = groupDetection.recentJoins[platform].filter(
+            entry => (now - entry.timestamp) <= groupDetection.groupDetectionWindow
+        );
+    }
+    
+    // Limpiar grupos detectados antiguos (después de 10 minutos)
+    let cleanedGroups = 0;
+    for (const [groupId, groupData] of groupDetection.detectedGroups) {
+        if (now - groupData.timestamp > 600000) { // 10 minutos
+            groupDetection.detectedGroups.delete(groupId);
+            cleanedGroups++;
+        }
+    }
+    
+    if (cleanedGroups > 0) {
+        console.log(`🧹 ${cleanedGroups} grupo(s) de detección limpiados por antigüedad`);
+    }
 }
 
 // Ejecutar limpieza cada 30 minutos
