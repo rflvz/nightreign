@@ -13,6 +13,9 @@ class MatchmakingSystem {
             'matchmaking-xbox': 'xbox', 
             'matchmaking-play': 'play'
         };
+        
+        // Sistema de delays para auto-unión
+        this.pendingAutoJoins = new Map(); // userId -> { timeout, platform, guildId, channelInfo }
     }
 
     /**
@@ -466,9 +469,32 @@ class MatchmakingSystem {
     }
 
     /**
+     * Verificar si un usuario podría formar parte de un grupo potencial que se está formando
+     * @param {string} userId - ID del usuario
+     * @param {string} platform - Plataforma
+     * @returns {boolean} - True si el usuario podría ser parte de un grupo en formación
+     */
+    isUserPotentialGroupMember(userId, platform) {
+        const { groupDetection } = this.client.matchmaking;
+        const now = Date.now();
+        
+        // Limpiar entradas antiguas primero
+        this.cleanupOldGroupDetectionEntries(platform);
+        
+        // Obtener usuarios que se han unido recientemente (incluyendo el actual)
+        const recentUsers = groupDetection.recentJoins[platform].filter(
+            entry => (now - entry.timestamp) <= groupDetection.groupDetectionWindow
+        );
+        
+        // Si ya hay 2 o más usuarios recientes (incluyendo potencialmente el actual), 
+        // este usuario podría completar un grupo
+        return recentUsers.length >= 2;
+    }
+
+    /**
      * Detectar si un usuario forma parte de un grupo intencional
      * @param {string} userId - ID del usuario
-     * @param {string} platform - Plataforma (pc, xbox, play)
+     * @param {string} platform - Plataforma
      * @returns {Object|null} - Información del grupo detectado o null
      */
     detectIntentionalGroup(userId, platform) {
@@ -523,11 +549,24 @@ class MatchmakingSystem {
      * @param {string} platform - Plataforma a limpiar
      */
     cleanupOldGroupDetectionEntries(platform) {
-        const { groupDetection } = this.client.matchmaking;
+        const { groupDetection, activeChannels } = this.client.matchmaking;
         const now = Date.now();
         
+        // Obtener lista de usuarios que ya están en canales activos
+        const usersInActiveChannels = new Set();
+        for (const [channelId, channelData] of activeChannels) {
+            if (channelData.platform === platform) {
+                channelData.members.forEach(userId => usersInActiveChannels.add(userId));
+            }
+        }
+        
+        // Filtrar entradas por tiempo Y por si ya están en canales activos
         groupDetection.recentJoins[platform] = groupDetection.recentJoins[platform].filter(
-            entry => (now - entry.timestamp) <= groupDetection.groupDetectionWindow
+            entry => {
+                const isNotExpired = (now - entry.timestamp) <= groupDetection.groupDetectionWindow;
+                const isNotInActiveChannel = !usersInActiveChannels.has(entry.userId);
+                return isNotExpired && isNotInActiveChannel;
+            }
         );
         
         // Limpiar grupos detectados antiguos (después de 5 minutos)
@@ -610,6 +649,137 @@ class MatchmakingSystem {
         } catch (error) {
             console.error(`❌ Error creando equipo para grupo intencional de ${groupData.platform}:`, error);
             return null;
+        }
+    }
+
+    /**
+     * Programar auto-unión con delay para permitir formación de grupos
+     * @param {string} userId - ID del usuario
+     * @param {string} guildId - ID del servidor
+     * @param {string} platform - Plataforma
+     * @param {Object} targetChannelInfo - Información del canal objetivo
+     * @param {number} delayMs - Delay en millisegundos (default: 12 segundos)
+     */
+    scheduleDelayedAutoJoin(userId, guildId, platform, targetChannelInfo, delayMs = 12000) {
+        // Cancelar cualquier auto-unión pendiente para este usuario
+        this.cancelPendingAutoJoin(userId);
+        
+        console.log(`⏳ Programando auto-unión con delay de ${delayMs/1000}s para usuario ${userId} en ${platform.toUpperCase()}`);
+        
+        const timeout = setTimeout(async () => {
+            try {
+                // Verificar si el usuario aún está disponible para auto-unión
+                if (await this.canUserAutoJoin(userId, guildId, platform)) {
+                    const joined = await this.joinActiveChannel(
+                        userId, 
+                        guildId, 
+                        targetChannelInfo.channel, 
+                        targetChannelInfo.channelData
+                    );
+                    
+                    if (joined) {
+                        const guild = await this.client.guilds.fetch(guildId);
+                        const member = await guild.members.fetch(userId);
+                        console.log(`✅ Auto-unión con delay exitosa: ${member.displayName} → ${targetChannelInfo.channel.name} (${platform.toUpperCase()})`);
+                    } else {
+                        console.log(`⚠️ Auto-unión con delay falló para usuario ${userId}`);
+                    }
+                } else {
+                    console.log(`🎯 Auto-unión cancelada - usuario ${userId} ya forma parte de un grupo o está en canal`);
+                }
+            } catch (error) {
+                console.error(`❌ Error en auto-unión con delay para usuario ${userId}:`, error);
+            } finally {
+                // Limpiar el pending auto-join
+                this.pendingAutoJoins.delete(userId);
+            }
+        }, delayMs);
+        
+        // Guardar el timeout para poder cancelarlo si es necesario
+        this.pendingAutoJoins.set(userId, {
+            timeout: timeout,
+            platform: platform,
+            guildId: guildId,
+            channelInfo: targetChannelInfo,
+            scheduledAt: Date.now()
+        });
+    }
+    
+    /**
+     * Cancelar auto-unión pendiente para un usuario
+     * @param {string} userId - ID del usuario
+     */
+    cancelPendingAutoJoin(userId) {
+        const pendingJoin = this.pendingAutoJoins.get(userId);
+        if (pendingJoin) {
+            clearTimeout(pendingJoin.timeout);
+            this.pendingAutoJoins.delete(userId);
+            console.log(`🚫 Auto-unión pendiente cancelada para usuario ${userId}`);
+            return true;
+        }
+        return false;
+    }
+    
+    /**
+     * Verificar si un usuario puede ser auto-unido (no está en grupo, no está en canal activo)
+     * @param {string} userId - ID del usuario
+     * @param {string} guildId - ID del servidor
+     * @param {string} platform - Plataforma
+     * @returns {boolean} - True si puede ser auto-unido
+     */
+    async canUserAutoJoin(userId, guildId, platform) {
+        try {
+            // Verificar si el usuario está en un grupo intencional
+            if (this.isUserInIntentionalGroup(userId, platform)) {
+                return false;
+            }
+            
+            // Verificar si el usuario ya está en un canal activo
+            const { activeChannels } = this.client.matchmaking;
+            for (const [channelId, channelData] of activeChannels) {
+                if (channelData.guildId === guildId && channelData.members.includes(userId)) {
+                    return false;
+                }
+            }
+            
+            // Verificar si el usuario aún está en un canal de matchmaking
+            const guild = await this.client.guilds.fetch(guildId);
+            const member = await guild.members.fetch(userId);
+            
+            if (!member.voice.channel) {
+                return false; // Usuario no está en canal de voz
+            }
+            
+            const currentPlatform = this.getPlatformFromChannel(member.voice.channel.name);
+            if (currentPlatform !== platform) {
+                return false; // Usuario cambió de plataforma o salió del matchmaking
+            }
+            
+            return true;
+        } catch (error) {
+            console.error(`❌ Error verificando si usuario ${userId} puede auto-unirse:`, error);
+            return false;
+        }
+    }
+    
+    /**
+     * Limpiar auto-uniones pendientes para una plataforma específica
+     * @param {string} platform - Plataforma a limpiar
+     */
+    cleanupPendingAutoJoins(platform = null) {
+        const now = Date.now();
+        const maxAge = 30000; // 30 segundos máximo
+        
+        for (const [userId, pendingJoin] of this.pendingAutoJoins) {
+            const shouldCleanup = platform ? 
+                (pendingJoin.platform === platform || (now - pendingJoin.scheduledAt) > maxAge) :
+                (now - pendingJoin.scheduledAt) > maxAge;
+                
+            if (shouldCleanup) {
+                clearTimeout(pendingJoin.timeout);
+                this.pendingAutoJoins.delete(userId);
+                console.log(`🧹 Auto-unión pendiente limpiada para usuario ${userId}`);
+            }
         }
     }
 }

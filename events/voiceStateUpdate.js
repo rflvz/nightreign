@@ -66,7 +66,27 @@ async function handleUserJoinedChannel(userId, channel, guildId, matchmakingSyst
             return;
         }
         
-        // TERCERO: Buscar canales activos de la misma plataforma con espacios libres (solo para usuarios individuales)
+        // PROTECCIÓN DE GRUPOS: Verificar si este usuario podría ser parte de un grupo que se está formando
+        const isPotentialGroupMember = matchmakingSystem.isUserPotentialGroupMember(userId, platform);
+        if (isPotentialGroupMember) {
+            console.log(`🛡️ Usuario ${userId} protegido de unión automática - podría formar grupo intencional en ${platform.toUpperCase()}`);
+            // Añadir a la cola normal y esperar a ver si se forma el grupo
+            const added = await matchmakingSystem.addToQueue(userId, guildId, platform);
+            if (added) {
+                matchmakingSystem.updateChannelActivity(channel.id);
+                
+                try {
+                    const guild = await channel.guild;
+                    const member = await guild.members.fetch(userId);
+                    console.log(`⏳ Usuario ${member.displayName} esperando formación de grupo potencial en ${platform.toUpperCase()}`);
+                } catch (error) {
+                    console.error('❌ Error obteniendo información del usuario:', error);
+                }
+            }
+            return;
+        }
+        
+        // TERCERO: Buscar canales activos de la misma plataforma con espacios libres (solo para usuarios individuales confirmados)
         const availableChannels = await matchmakingSystem.findChannelsWithSpace(guildId, platform);
         
         // Filtrar canales que NO son grupos intencionales para permitir unión automática
@@ -75,35 +95,33 @@ async function handleUserJoinedChannel(userId, channel, guildId, matchmakingSyst
         );
         
         if (nonIntentionalChannels.length > 0) {
-            // Intentar unir al usuario al primer canal disponible (el que tiene menos miembros)
+            // DOBLE PROTECCIÓN: En lugar de unir inmediatamente, programar auto-unión con delay
             const targetChannelInfo = nonIntentionalChannels[0];
-            const joined = await matchmakingSystem.joinActiveChannel(
-                userId, 
-                guildId, 
-                targetChannelInfo.channel, 
-                targetChannelInfo.channelData
-            );
             
-            if (joined) {
-                try {
-                    const guild = await channel.guild;
-                    const member = await guild.members.fetch(userId);
-                    
-                    console.log(`🎯 Usuario ${member.displayName} unido directamente al canal activo ${targetChannelInfo.channel.name} (${platform.toUpperCase()})`);
-                    console.log(`📊 Canal ahora tiene ${targetChannelInfo.channel.members.size}/${matchmaking.config.teamSize} miembros`);
-                    
-                    // Si el canal se llenó completamente, notificarlo
-                    if (targetChannelInfo.channel.members.size === matchmaking.config.teamSize) {
-                        console.log(`🎮 ¡Canal ${targetChannelInfo.channel.name} completamente lleno! Equipo de ${platform.toUpperCase()} listo para jugar`);
-                    }
-                } catch (error) {
-                    console.error('❌ Error obteniendo información del usuario:', error);
+            try {
+                const guild = await channel.guild;
+                const member = await guild.members.fetch(userId);
+                
+                console.log(`⏳ Programando auto-unión con delay para ${member.displayName} → ${targetChannelInfo.channel.name} (${platform.toUpperCase()})`);
+                console.log(`🛡️ Protección activa: Esperando posibles amigos por 12 segundos...`);
+                
+                // Programar auto-unión con delay para permitir que lleguen amigos
+                system.scheduleDelayedAutoJoin(userId, guildId, platform, targetChannelInfo);
+                
+                // Añadir a la cola mientras espera el delay
+                const added = await system.addToQueue(userId, guildId, platform);
+                if (added) {
+                    system.updateChannelActivity(channel.id);
+                    console.log(`📝 Usuario ${member.displayName} en cola con auto-unión programada`);
                 }
-                return; // Salir sin añadir a la cola
+                
+            } catch (error) {
+                console.error('❌ Error programando auto-unión con delay:', error);
             }
+            return; // Salir - el delay se encargará de la auto-unión
         }
         
-        // CUARTO: Si no hay canales disponibles o no se pudo unir, añadir a la cola normal
+        // CUARTO: Si no hay canales disponibles o no se pudo unir, añadir a la cola normal (usuarios individuales confirmados)
         const added = await matchmakingSystem.addToQueue(userId, guildId, platform);
         if (added) {
             // Actualizar actividad del canal de lobby
@@ -148,8 +166,11 @@ async function handleUserLeftChannel(userId, channel, guildId, matchmakingSystem
     const platform = matchmakingSystem.getPlatformFromChannel(channel.name);
     
     if (platform) {
+        // Cancelar auto-unión pendiente si existe
+        system.cancelPendingAutoJoin(userId);
+        
         // Limpiar el usuario de las entradas de detección de grupo
-        const { groupDetection } = matchmakingSystem.client.matchmaking;
+        const { groupDetection } = system.client.matchmaking;
         groupDetection.recentJoins[platform] = groupDetection.recentJoins[platform].filter(
             entry => entry.userId !== userId
         );

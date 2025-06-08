@@ -54,6 +54,15 @@ module.exports = {
                 }
             }
             
+            // Auto-uniones pendientes
+            let pendingAutoJoinsInfo = '';
+            for (const [userId, pendingJoin] of matchmakingSystem.pendingAutoJoins) {
+                if (pendingJoin.guildId === guildId) {
+                    const timeLeft = Math.max(0, Math.floor((12000 - (now - pendingJoin.scheduledAt)) / 1000));
+                    pendingAutoJoinsInfo += `<@${userId}> → ${pendingJoin.platform.toUpperCase()} (${timeLeft}s restantes)\n`;
+                }
+            }
+            
             const embed = new EmbedBuilder()
                 .setTitle('🔧 Debug del Sistema de Matchmaking')
                 .setColor(0x0099FF)
@@ -96,6 +105,14 @@ module.exports = {
                 embed.addFields({
                     name: '🔊 Canales Activos',
                     value: activeChannelsInfo,
+                    inline: false
+                });
+            }
+            
+            if (pendingAutoJoinsInfo) {
+                embed.addFields({
+                    name: '⏳ Auto-Uniones Pendientes',
+                    value: pendingAutoJoinsInfo,
                     inline: false
                 });
             }

@@ -1,5 +1,38 @@
 # Changelog
 
+## [v2.1.0] - 2024-12-20
+
+### 🛡️ Sistema Híbrido de Protección (DOBLE PROTECCIÓN)
+
+#### ⏳ Nuevo Sistema de Delay de Auto-Unión
+- **Delay inteligente**: 12 segundos de espera antes de auto-unir a canales existentes
+- **Protección robusta**: Tiempo suficiente para que amigos entren juntos
+- **Cancelación automática**: Se cancela si se detecta formación de grupo
+- **Verificación múltiple**: Verifica disponibilidad antes de auto-unir
+
+#### 🎯 Mejoras en Detección de Grupos
+- **Protección de grupos potenciales**: Detecta usuarios que podrían formar grupos
+- **Limpieza inteligente**: Elimina usuarios ya en canales activos de detección
+- **Doble verificación**: Combina detección temporal + protección por delay
+
+#### 🔧 Nuevas Funciones Técnicas
+- `scheduleDelayedAutoJoin()`: Programa auto-unión con delay
+- `cancelPendingAutoJoin()`: Cancela auto-uniones pendientes
+- `canUserAutoJoin()`: Verifica si usuario puede ser auto-unido
+- `cleanupPendingAutoJoins()`: Limpia delays expirados
+- `isUserPotentialGroupMember()`: Detecta grupos potenciales
+
+#### 📊 Comando Debug Mejorado
+- **Auto-uniones pendientes**: Muestra delays activos con tiempo restante
+- **Información completa**: Estado de toda la protección híbrida
+
+### 🏗️ Arquitectura Híbrida
+**Primera línea de defensa**: Delay de 12 segundos antes de auto-unión  
+**Segunda línea de defensa**: Sistema de detección de grupos intencionales  
+**Resultado**: CERO separaciones accidentales de grupos de amigos
+
+---
+
 ## [v2.0.0] - 2024-12-20
 
 ### ✨ Nuevas Características

@@ -167,6 +167,11 @@ function cleanupInactiveChannels() {
     if (cleanedGroups > 0) {
         console.log(`🧹 ${cleanedGroups} grupo(s) de detección limpiados por antigüedad`);
     }
+    
+    // Limpiar auto-uniones pendientes antiguas
+    if (client.matchmakingSystem) {
+        client.matchmakingSystem.cleanupPendingAutoJoins();
+    }
 }
 
 // Ejecutar limpieza cada 30 minutos
