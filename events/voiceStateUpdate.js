@@ -8,23 +8,20 @@ module.exports = {
         const userId = newState.id;
         const guildId = newState.guild.id;
 
-        // Usar la instancia ya inicializada del sistema de matchmaking
-        const system = matchmakingSystem;
-
         // Usuario se unió a un canal de voz
         if (!oldState.channel && newState.channel) {
-            await handleUserJoinedChannel(userId, newState.channel, guildId, system, matchmaking);
+            await handleUserJoinedChannel(userId, newState.channel, guildId, matchmakingSystem, matchmaking);
         }
         
         // Usuario salió de un canal de voz
         if (oldState.channel && !newState.channel) {
-            await handleUserLeftChannel(userId, oldState.channel, guildId, system, matchmaking);
+            await handleUserLeftChannel(userId, oldState.channel, guildId, matchmakingSystem, matchmaking);
         }
         
         // Usuario se movió entre canales
         if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
-            await handleUserLeftChannel(userId, oldState.channel, guildId, system, matchmaking);
-            await handleUserJoinedChannel(userId, newState.channel, guildId, system, matchmaking);
+            await handleUserLeftChannel(userId, oldState.channel, guildId, matchmakingSystem, matchmaking);
+            await handleUserJoinedChannel(userId, newState.channel, guildId, matchmakingSystem, matchmaking);
         }
     },
 };
@@ -106,12 +103,12 @@ async function handleUserJoinedChannel(userId, channel, guildId, matchmakingSyst
                 console.log(`🛡️ Protección activa: Esperando posibles amigos por 12 segundos...`);
                 
                 // Programar auto-unión con delay para permitir que lleguen amigos
-                system.scheduleDelayedAutoJoin(userId, guildId, platform, targetChannelInfo);
+                matchmakingSystem.scheduleDelayedAutoJoin(userId, guildId, platform, targetChannelInfo);
                 
                 // Añadir a la cola mientras espera el delay
-                const added = await system.addToQueue(userId, guildId, platform);
+                const added = await matchmakingSystem.addToQueue(userId, guildId, platform);
                 if (added) {
-                    system.updateChannelActivity(channel.id);
+                    matchmakingSystem.updateChannelActivity(channel.id);
                     console.log(`📝 Usuario ${member.displayName} en cola con auto-unión programada`);
                 }
                 
@@ -167,10 +164,10 @@ async function handleUserLeftChannel(userId, channel, guildId, matchmakingSystem
     
     if (platform) {
         // Cancelar auto-unión pendiente si existe
-        system.cancelPendingAutoJoin(userId);
+        matchmakingSystem.cancelPendingAutoJoin(userId);
         
         // Limpiar el usuario de las entradas de detección de grupo
-        const { groupDetection } = system.client.matchmaking;
+        const { groupDetection } = matchmakingSystem.client.matchmaking;
         groupDetection.recentJoins[platform] = groupDetection.recentJoins[platform].filter(
             entry => entry.userId !== userId
         );
